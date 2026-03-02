@@ -1433,7 +1433,7 @@ void GFX_CaptureMouse(void) {
 	if (sdl.mouse.locked) {
 		emscripten_exit_pointerlock();
 	} else {
-		EM_ASM(Module['canvas'].requestPointerLock());
+		EM_ASM(Module['canvas'].requestPointerLock().catch(function(){}));
 	}
 }
 
