@@ -46,9 +46,16 @@ extern "C" EMSCRIPTEN_RESULT emscripten_set_visibilitychange_callback_on_thread(
 extern "C" EMSCRIPTEN_RESULT emscripten_set_blur_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
 extern "C" EMSCRIPTEN_RESULT emscripten_set_focus_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
 
-/* SDL_GetMouse returns the internal SDL_Mouse struct. ShowCursor is the
-   3rd function pointer field. We null it to disable cursor style changes. */
-extern "C" void *SDL_GetMouse(void);
+/* Override all mouse and pointer lock callback registrations so SDL2
+   cannot register its own handlers (which break when canvas has no
+   id="canvas"). All mouse/pointer input is handled via JS listeners. */
+extern "C" EMSCRIPTEN_RESULT emscripten_set_mousemove_callback_on_thread(const char *target, void *userData, bool useCapture, em_mouse_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_mousedown_callback_on_thread(const char *target, void *userData, bool useCapture, em_mouse_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_mouseup_callback_on_thread(const char *target, void *userData, bool useCapture, em_mouse_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_mouseenter_callback_on_thread(const char *target, void *userData, bool useCapture, em_mouse_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_mouseleave_callback_on_thread(const char *target, void *userData, bool useCapture, em_mouse_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_pointerlockchange_callback_on_thread(const char *target, void *userData, bool useCapture, em_pointerlockchange_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+
 #endif
 
 #include "cross.h"
@@ -1375,18 +1382,18 @@ dosurface:
 	}//CASE
 	if (retFlags)
 		GFX_Start();
+#ifndef EMSCRIPTEN
 	if (!sdl.mouse.autoenable) SDL_ShowCursor(sdl.mouse.autolock?SDL_DISABLE:SDL_ENABLE);
+#endif
 	return retFlags;
 }
 
 #ifdef EMSCRIPTEN
-static bool use_capture_callback = false;
-static bool em_pointer_lock_requested = false;
 static void doGFX_CaptureMouse(void);
 static void DefocusPause(void);
 
-extern "C" int EMSCRIPTEN_KEEPALIVE em_should_lock_pointer(void) {
-	return (em_pointer_lock_requested && !sdl.mouse.locked) ? 1 : 0;
+extern "C" void EMSCRIPTEN_KEEPALIVE em_pointer_lock(void) {
+	if (sdl.window && !sdl.mouse.locked) GFX_CaptureMouse();
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
@@ -1399,31 +1406,34 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_on_focus(void) {
 	em_focus_regained = true;
 }
 
-static EM_BOOL em_mousemove_callback(int eventType,
-                          const EmscriptenMouseEvent *mouseEvent,
-                          void *userData) {
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_moved(int xrel, int yrel) {
 	if (sdl.mouse.locked) {
 		Mouse_CursorMoved(
-			(float)mouseEvent->movementX*sdl.mouse.xsensitivity/100.0f,
-			(float)mouseEvent->movementY*sdl.mouse.ysensitivity/100.0f,
+			(float)xrel*sdl.mouse.xsensitivity/100.0f,
+			(float)yrel*sdl.mouse.ysensitivity/100.0f,
 			0, 0, true);
-		return true;
 	}
-	return false;
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_pointerlock_changed(int locked) {
+	if ((locked && !sdl.mouse.locked) || (!locked && sdl.mouse.locked)) {
+		doGFX_CaptureMouse();
+	}
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_pressed(int button) {
+	if (sdl.mouse.locked) Mouse_ButtonPressed(button);
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_released(int button) {
+	if (sdl.mouse.locked) Mouse_ButtonReleased(button);
 }
 
 void GFX_CaptureMouse(void) {
-	if (use_capture_callback) {
-		if (sdl.mouse.locked) {
-			emscripten_exit_pointerlock();
-		} else {
-			// Flag that a lock was requested. The DOM mousedown listener
-			// will call requestPointerLock() on the next click, inside
-			// the event handler context where the browser allows it.
-			em_pointer_lock_requested = true;
-		}
+	if (sdl.mouse.locked) {
+		emscripten_exit_pointerlock();
 	} else {
-		doGFX_CaptureMouse();
+		EM_ASM(Module['canvas'].requestPointerLock());
 	}
 }
 
@@ -1444,7 +1454,9 @@ void GFX_CaptureMouse(void)
 #else
 		SDL_WM_GrabInput(SDL_GRAB_ON);
 #endif
+#ifndef EMSCRIPTEN
 		SDL_ShowCursor(SDL_DISABLE);
+#endif
 	} else {
 #if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
 		/* See comment above. */
@@ -1453,7 +1465,9 @@ void GFX_CaptureMouse(void)
 #else
 		SDL_WM_GrabInput(SDL_GRAB_OFF);
 #endif
+#ifndef EMSCRIPTEN
 		if (sdl.mouse.autoenable || !sdl.mouse.autolock) SDL_ShowCursor(SDL_ENABLE);
+#endif
 	}
         mouselocked=sdl.mouse.locked;
 }
@@ -1467,7 +1481,9 @@ void GFX_UpdateSDLCaptureState(void) {
 #else
 		SDL_WM_GrabInput(SDL_GRAB_ON);
 #endif
+#ifndef EMSCRIPTEN
 		SDL_ShowCursor(SDL_DISABLE);
+#endif
 	} else {
 #if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
 		/* See doGFX_CaptureMouse comment. */
@@ -1476,7 +1492,9 @@ void GFX_UpdateSDLCaptureState(void) {
 #else
 		SDL_WM_GrabInput(SDL_GRAB_OFF);
 #endif
+#ifndef EMSCRIPTEN
 		if (sdl.mouse.autoenable || !sdl.mouse.autolock) SDL_ShowCursor(SDL_ENABLE);
+#endif
 	}
 	CPU_Reset_AutoAdjust();
 	GFX_SetTitle(-1,-1,false);
@@ -1489,20 +1507,6 @@ static void CaptureMouse(bool pressed) {
 	GFX_CaptureMouse();
 }
 
-#ifdef EMSCRIPTEN
-EM_BOOL em_pointerlock_callback(int eventType,
-                          const EmscriptenPointerlockChangeEvent *keyEvent,
-                          void *userData) {
-	if (eventType == EMSCRIPTEN_EVENT_POINTERLOCKCHANGE) {
-		if (keyEvent->isActive) em_pointer_lock_requested = false;
-		if ((!keyEvent->isActive && sdl.mouse.locked) ||
-			(keyEvent->isActive && !sdl.mouse.locked)) {
-			doGFX_CaptureMouse();
-		}
-	}
-	return false;
-}
-#endif
 
 #if defined (WIN32)
 STICKYKEYS stick_keys = {sizeof(STICKYKEYS), 0};
@@ -2119,7 +2123,9 @@ static void GUI_StartUp(Section * sec) {
 #endif	// !SDL_VERSION_ATLEAST(2,0,0)
 
 	sdl.mouse.autoenable=section->Get_bool("autolock");
+#ifndef EMSCRIPTEN
 	if (!sdl.mouse.autoenable) SDL_ShowCursor(SDL_DISABLE);
+#endif
 	sdl.mouse.autolock=false;
 
 	Prop_multival* p3 = section->Get_multival("sensitivity");
@@ -2400,12 +2406,16 @@ static void GUI_StartUp(Section * sec) {
 }
 
 void Mouse_AutoLock(bool enable) {
+#ifdef EMSCRIPTEN
+	(void)enable;
+#else
 	sdl.mouse.autolock=enable;
 	if (sdl.mouse.autoenable) sdl.mouse.requestlock=enable;
 	else {
 		SDL_ShowCursor(enable?SDL_DISABLE:SDL_ENABLE);
 		sdl.mouse.requestlock=false;
 	}
+#endif
 }
 
 static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
@@ -2427,6 +2437,7 @@ static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
 static void HandleMouseButton(SDL_MouseButtonEvent * button) {
 	switch (button->state) {
 	case SDL_PRESSED:
+#ifndef EMSCRIPTEN
 		if (sdl.mouse.requestlock && !sdl.mouse.locked) {
 			GFX_CaptureMouse();
 			// Don't pass click to mouse handler
@@ -2436,6 +2447,7 @@ static void HandleMouseButton(SDL_MouseButtonEvent * button) {
 			GFX_CaptureMouse();
 			break;
 		}
+#endif
 		switch (button->button) {
 		case SDL_BUTTON_LEFT:
 			Mouse_ButtonPressed(0);
@@ -3134,20 +3146,21 @@ int main(int argc, char* argv[]) {
 		Module['screenIsReadOnly'] = true;
 		// set nearest neighbor scaling, for sharply upscaled pixels
 		var canvasStyle = Module['canvas'].style;
-		document.addEventListener('mousedown', function() {
-			if (Module._em_should_lock_pointer()) {
-				Module['canvas'].requestPointerLock();
-			}
+		function mapBtn(b) { return b === 0 ? 0 : b === 2 ? 1 : b === 1 ? 2 : -1; }
+		function safeCall(fn) { try { fn(); } catch(e) {} }
+		document.addEventListener('mousedown', function(e) {
+			var b = mapBtn(e.button); if (b >= 0) safeCall(function() { Module._em_mouse_pressed(b); });
+		}, true);
+		document.addEventListener('mouseup', function(e) {
+			var b = mapBtn(e.button); if (b >= 0) safeCall(function() { Module._em_mouse_released(b); });
+		}, true);
+		document.addEventListener('mousemove', function(e) {
+			safeCall(function() { Module._em_mouse_moved(e.movementX|0, e.movementY|0); });
+		}, true);
+		document.addEventListener('pointerlockchange', function() {
+			safeCall(function() { Module._em_pointerlock_changed(document.pointerLockElement ? 1 : 0); });
 		}, true);
 	);
-	if (emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
-	                                              NULL, true,
-	                                              em_pointerlock_callback)
-	    == EMSCRIPTEN_RESULT_SUCCESS) {
-		use_capture_callback = true;
-	}
-	emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
-	                                  NULL, true, em_mousemove_callback);
 #endif
 
 	/* Display Welcometext in the console */
@@ -3191,7 +3204,6 @@ int main(int argc, char* argv[]) {
 	sdl.inited = true;
 #if SDL_VERSION_ATLEAST(2,0,0) && defined(EMSCRIPTEN)
 	/* Disable SDL2's cursor style changes on the canvas. */
-	((void **)SDL_GetMouse())[2] = NULL; /* ShowCursor is the 3rd field */
 	/* Mouse motion during pointer lock is handled directly by
 	 * em_mousemove_callback, bypassing SDL_SetRelativeMouseMode
 	 * entirely (it conflicts with our pointer lock management). */
@@ -3362,7 +3374,9 @@ int main(int argc, char* argv[]) {
 #else
 	SDL_WM_GrabInput(SDL_GRAB_OFF);
 #endif
+#ifndef EMSCRIPTEN
 	SDL_ShowCursor(SDL_ENABLE);
+#endif
 
 	SDL_Quit();//Let's hope sdl will quit as well when it catches an exception
 	return 0;
