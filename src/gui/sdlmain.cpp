@@ -39,6 +39,12 @@
 /* Override Emscripten's emscripten_set_window_title to prevent
    SDL_CreateWindow from changing document.title. */
 extern "C" void emscripten_set_window_title(const char *title) { }
+
+/* Override visibility/focus callbacks so SDL2 cannot register handlers
+   that pause/resume the emulator on visibility changes. */
+extern "C" EMSCRIPTEN_RESULT emscripten_set_visibilitychange_callback_on_thread(void *userData, bool useCapture, em_visibilitychange_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_blur_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+extern "C" EMSCRIPTEN_RESULT emscripten_set_focus_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
 #endif
 
 #include "cross.h"
@@ -504,6 +510,7 @@ static void PauseDOSBox(bool pressed) {
 
 static void SetPriority(PRIORITY_LEVELS level);
 #ifdef EMSCRIPTEN
+static bool em_focus_regained = false;
 static Bitu DefocusPause_Loop(void);
 #endif
 static void DefocusPause(void) {
@@ -534,6 +541,11 @@ static void DefocusPause(void) {
 static Bitu DefocusPause_Loop(void) {
 	SDL_Event ev;
 	bool paused = true;
+	if (em_focus_regained) {
+		em_focus_regained = false;
+		paused = false;
+		GFX_SetTitle(-1,-1,false);
+	}
 	while (SDL_PollEvent(&ev)) {
 #endif // EMSCRIPTEN
 		switch (ev.type) {
@@ -1367,9 +1379,20 @@ dosurface:
 static bool use_capture_callback = false;
 static bool em_pointer_lock_requested = false;
 static void doGFX_CaptureMouse(void);
+static void DefocusPause(void);
 
 extern "C" int EMSCRIPTEN_KEEPALIVE em_should_lock_pointer(void) {
 	return (em_pointer_lock_requested && !sdl.mouse.locked) ? 1 : 0;
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
+	if (!divert_events) {
+		DefocusPause();
+	}
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_on_focus(void) {
+	em_focus_regained = true;
 }
 
 static EM_BOOL em_mousemove_callback(int eventType,
@@ -2545,6 +2568,7 @@ void GFX_Events() {
 				case SDL_WINDOWEVENT_EXPOSED:
 					if (sdl.draw.callback) sdl.draw.callback( GFX_CallBackRedraw );
 					continue;
+	#ifndef EMSCRIPTEN
 				case SDL_WINDOWEVENT_FOCUS_GAINED:
 					if (sdl.desktop.fullscreen && !sdl.mouse.locked)
 						GFX_CaptureMouse();
@@ -2565,17 +2589,21 @@ void GFX_Events() {
 					GFX_LosingFocus();
 					CPU_Enable_SkipAutoAdjust();
 					break;
+#endif
 				default: ;
 			}
 
 			/* Non-focus priority is set to pause; check to see if we've lost window or input focus
 			 * i.e. has the window been minimised or made inactive?
+			 * On Emscripten, blur/focus listeners handle this instead.
 			 */
+#ifndef EMSCRIPTEN
 			if (sdl.priority.nofocus == PRIORITY_LEVEL_PAUSE) {
 				if ((event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) || (event.window.event == SDL_WINDOWEVENT_MINIMIZED)) {
 					DefocusPause();
 				}
 			}
+#endif
 			break;
 #endif	// SDL_VERSION_ATLEAST(2,0,0)
 #if !SDL_VERSION_ATLEAST(2,0,0)
