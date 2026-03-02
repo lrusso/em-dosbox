@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <dirent.h>
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
 extern bool mapper_is_active;
@@ -2334,8 +2335,23 @@ static void MAPPER_SaveBinds(void) {
 	change_action_text("Mapper file saved.",CLR_WHITE);
 }
 
+static FILE* fopen_caseless(const char* dir, const char* name, const char* mode) {
+	DIR* d = opendir(dir);
+	if (!d) return NULL;
+	struct dirent* entry;
+	while ((entry = readdir(d)) != NULL) {
+		if (strcasecmp(entry->d_name, name) == 0) {
+			std::string path = std::string(dir) + "/" + entry->d_name;
+			closedir(d);
+			return fopen(path.c_str(), mode);
+		}
+	}
+	closedir(d);
+	return NULL;
+}
+
 static bool MAPPER_LoadBinds(void) {
-	FILE * loadfile=fopen("/drive_c/mapper.map","rt");
+	FILE * loadfile=fopen_caseless("/drive_c","mapper.map","rt");
 	if (!loadfile) return false;
 	char linein[512];
 	while (fgets(linein,512,loadfile)) {
