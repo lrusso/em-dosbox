@@ -45,6 +45,10 @@ extern "C" void emscripten_set_window_title(const char *title) { }
 extern "C" EMSCRIPTEN_RESULT emscripten_set_visibilitychange_callback_on_thread(void *userData, bool useCapture, em_visibilitychange_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
 extern "C" EMSCRIPTEN_RESULT emscripten_set_blur_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
 extern "C" EMSCRIPTEN_RESULT emscripten_set_focus_callback_on_thread(const char *target, void *userData, bool useCapture, em_focus_callback_func callback, pthread_t targetThread) { return EMSCRIPTEN_RESULT_SUCCESS; }
+
+/* SDL_GetMouse returns the internal SDL_Mouse struct. ShowCursor is the
+   3rd function pointer field. We null it to disable cursor style changes. */
+extern "C" void *SDL_GetMouse(void);
 #endif
 
 #include "cross.h"
@@ -3186,6 +3190,8 @@ int main(int argc, char* argv[]) {
 		) < 0 ) E_Exit("Can't init SDL %s",SDL_GetError());
 	sdl.inited = true;
 #if SDL_VERSION_ATLEAST(2,0,0) && defined(EMSCRIPTEN)
+	/* Disable SDL2's cursor style changes on the canvas. */
+	((void **)SDL_GetMouse())[2] = NULL; /* ShowCursor is the 3rd field */
 	/* Mouse motion during pointer lock is handled directly by
 	 * em_mousemove_callback, bypassing SDL_SetRelativeMouseMode
 	 * entirely (it conflicts with our pointer lock management). */
