@@ -1414,12 +1414,23 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_pointer_lock(void) {
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
+	/* SDL2's blur callback is stubbed out, so SDL_ResetKeyboard() never gets
+	 * called automatically. Call it here so SDL's internal key-state table is
+	 * cleared when the window loses focus, preventing keys from being stuck
+	 * as "pressed" and causing keystrokes to be ignored after returning. */
+	SDL_ResetKeyboard();
 	if (!divert_events) {
 		DefocusPause();
 	}
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_focus(void) {
+	/* Directly clear divert_events here as a safety measure: if em_on_blur()
+	 * fired during early boot before DOSBOX_RealInit() ran, DefocusPause_Loop
+	 * may have been overridden by DOSBOX_SetLoop(&Normal_Loop) and will never
+	 * run to clear divert_events itself. Clearing it here ensures GFX_Events()
+	 * always processes keyboard events after focus is regained. */
+	divert_events = false;
 	em_focus_regained = true;
 }
 
