@@ -3102,13 +3102,6 @@ int main(int argc, char* argv[]) {
 		Module['screenIsReadOnly'] = true;
 		// set nearest neighbor scaling, for sharply upscaled pixels
 		var canvasStyle = Module['canvas'].style;
-		canvasStyle.imageRendering = "optimizeSpeed";
-		canvasStyle.imageRendering = "-moz-crisp-edges";
-		canvasStyle.imageRendering = "-o-crisp-edges";
-		canvasStyle.imageRendering = "-webkit-optimize-contrast";
-		canvasStyle.imageRendering = "optimize-contrast";
-		canvasStyle.imageRendering = "crisp-edges";
-		canvasStyle.imageRendering = "pixelated";
 		document.addEventListener('mousedown', function() {
 			if (Module._em_should_lock_pointer()) {
 				Module['canvas'].requestPointerLock();
