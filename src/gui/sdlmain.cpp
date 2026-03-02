@@ -1361,19 +1361,36 @@ dosurface:
 
 #ifdef EMSCRIPTEN
 static bool use_capture_callback = false;
+static bool em_pointer_lock_requested = false;
 static void doGFX_CaptureMouse(void);
 
 extern "C" int EMSCRIPTEN_KEEPALIVE em_should_lock_pointer(void) {
-	return (use_capture_callback && sdl.mouse.requestlock && !sdl.mouse.locked) ? 1 : 0;
+	return (em_pointer_lock_requested && !sdl.mouse.locked) ? 1 : 0;
+}
+
+static EM_BOOL em_mousemove_callback(int eventType,
+                          const EmscriptenMouseEvent *mouseEvent,
+                          void *userData) {
+	if (sdl.mouse.locked) {
+		Mouse_CursorMoved(
+			(float)mouseEvent->movementX*sdl.mouse.xsensitivity/100.0f,
+			(float)mouseEvent->movementY*sdl.mouse.ysensitivity/100.0f,
+			0, 0, true);
+		return true;
+	}
+	return false;
 }
 
 void GFX_CaptureMouse(void) {
 	if (use_capture_callback) {
 		if (sdl.mouse.locked) {
 			emscripten_exit_pointerlock();
+		} else {
+			// Flag that a lock was requested. The DOM mousedown listener
+			// will call requestPointerLock() on the next click, inside
+			// the event handler context where the browser allows it.
+			em_pointer_lock_requested = true;
 		}
-		// Locking is handled by the DOM mousedown listener which calls
-		// requestPointerLock() inside the event handler context.
 	} else {
 		doGFX_CaptureMouse();
 	}
@@ -1386,14 +1403,21 @@ void GFX_CaptureMouse(void)
 {
 	sdl.mouse.locked=!sdl.mouse.locked;
 	if (sdl.mouse.locked) {
-#if SDL_VERSION_ATLEAST(2,0,0)
+#if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
+		/* Pointer lock and relative mode are managed separately.
+		 * SDL_SetRelativeMouseMode is set once at init and never
+		 * toggled, to avoid triggering emscripten_request_pointerlock
+		 * internally which conflicts with our pointer lock management. */
+#elif SDL_VERSION_ATLEAST(2,0,0)
 		SDL_SetRelativeMouseMode(SDL_TRUE);
 #else
 		SDL_WM_GrabInput(SDL_GRAB_ON);
 #endif
 		SDL_ShowCursor(SDL_DISABLE);
 	} else {
-#if SDL_VERSION_ATLEAST(2,0,0)
+#if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
+		/* See comment above. */
+#elif SDL_VERSION_ATLEAST(2,0,0)
 		SDL_SetRelativeMouseMode(SDL_FALSE);
 #else
 		SDL_WM_GrabInput(SDL_GRAB_OFF);
@@ -1405,14 +1429,18 @@ void GFX_CaptureMouse(void)
 
 void GFX_UpdateSDLCaptureState(void) {
 	if (sdl.mouse.locked) {
-#if SDL_VERSION_ATLEAST(2,0,0)
+#if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
+		/* See doGFX_CaptureMouse comment. */
+#elif SDL_VERSION_ATLEAST(2,0,0)
 		SDL_SetRelativeMouseMode(SDL_TRUE);
 #else
 		SDL_WM_GrabInput(SDL_GRAB_ON);
 #endif
 		SDL_ShowCursor(SDL_DISABLE);
 	} else {
-#if SDL_VERSION_ATLEAST(2,0,0)
+#if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
+		/* See doGFX_CaptureMouse comment. */
+#elif SDL_VERSION_ATLEAST(2,0,0)
 		SDL_SetRelativeMouseMode(SDL_FALSE);
 #else
 		SDL_WM_GrabInput(SDL_GRAB_OFF);
@@ -1435,6 +1463,7 @@ EM_BOOL em_pointerlock_callback(int eventType,
                           const EmscriptenPointerlockChangeEvent *keyEvent,
                           void *userData) {
 	if (eventType == EMSCRIPTEN_EVENT_POINTERLOCKCHANGE) {
+		if (keyEvent->isActive) em_pointer_lock_requested = false;
 		if ((!keyEvent->isActive && sdl.mouse.locked) ||
 			(keyEvent->isActive && !sdl.mouse.locked)) {
 			doGFX_CaptureMouse();
@@ -2349,6 +2378,13 @@ void Mouse_AutoLock(bool enable) {
 }
 
 static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
+#ifdef EMSCRIPTEN
+	/* When pointer-locked, mouse motion is handled directly by
+	 * em_mousemove_callback which reads movementX/Y from the DOM event.
+	 * SDL's xrel/yrel are unreliable here because SDL_SetRelativeMouseMode
+	 * cannot be used (it internally calls emscripten_request_pointerlock). */
+	if (sdl.mouse.locked) return;
+#endif
 	if (sdl.mouse.locked || !sdl.mouse.autoenable)
 		Mouse_CursorMoved((float)motion->xrel*sdl.mouse.xsensitivity/100.0f,
 						  (float)motion->yrel*sdl.mouse.ysensitivity/100.0f,
@@ -3053,6 +3089,11 @@ int main(int argc, char* argv[]) {
 
 #if defined(EMSCRIPTEN) && defined(C_SDLGFX)
 	EM_ASM(
+		// Fix Emscripten's NULL target resolution. specialHTMLTargets[0]
+		// is 0 (falsy), causing findEventTarget to fall through to
+		// querySelector("0") which throws. Point it to the canvas so
+		// all Emscripten APIs using NULL target resolve correctly.
+		specialHTMLTargets[0] = Module['canvas'];
 		// Don't copy canvas image back into RAM in SDL_LockSurface()
 		Module['screenIsReadOnly'] = true;
 		// set nearest neighbor scaling, for sharply upscaled pixels
@@ -3076,6 +3117,8 @@ int main(int argc, char* argv[]) {
 	    == EMSCRIPTEN_RESULT_SUCCESS) {
 		use_capture_callback = true;
 	}
+	emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
+	                                  NULL, true, em_mousemove_callback);
 #endif
 
 	/* Display Welcometext in the console */
@@ -3117,6 +3160,11 @@ int main(int argc, char* argv[]) {
 #endif
 		) < 0 ) E_Exit("Can't init SDL %s",SDL_GetError());
 	sdl.inited = true;
+#if SDL_VERSION_ATLEAST(2,0,0) && defined(EMSCRIPTEN)
+	/* Mouse motion during pointer lock is handled directly by
+	 * em_mousemove_callback, bypassing SDL_SetRelativeMouseMode
+	 * entirely (it conflicts with our pointer lock management). */
+#endif
 #if SDL_VERSION_ATLEAST(2,0,0)
 	/* Text input is enabled by video init if there is no on screen keyboard.
 	 * It is not used by DOSBox. Emscripten SDL 2 will only override default
