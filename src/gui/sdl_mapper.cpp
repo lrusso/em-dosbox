@@ -27,6 +27,7 @@
 #include <assert.h>
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
+extern bool mapper_is_active;
 #endif
 
 #include "SDL.h"
@@ -48,6 +49,7 @@
 #include "mapper.h"
 #include "setup.h"
 #include "pic.h"
+#include "dos_inc.h"
 
 enum {
 	CLR_BLACK=0,
@@ -2305,12 +2307,7 @@ void MAPPER_AddHandler(MAPPER_Handler * handler,MapKeys key,Bitu mods,char const
 	return ;
 }
 
-static void MAPPER_SaveBinds(void) {
-	FILE * savefile=fopen(mapper.filename.c_str(),"wt+");
-	if (!savefile) {
-		LOG_MSG("Can't open %s for saving the mappings",mapper.filename.c_str());
-		return;
-	}
+static void MAPPER_SaveBindsToFile(FILE * savefile) {
 	char buf[128];
 	for (CEventVector_it event_it=events.begin();event_it!=events.end();event_it++) {
 		CEvent * event=*(event_it);
@@ -2323,19 +2320,29 @@ static void MAPPER_SaveBinds(void) {
 		}
 		fprintf(savefile,"\n");
 	}
+}
+
+static void MAPPER_SaveBinds(void) {
+	FILE * savefile=fopen("/drive_c/mapper.map","wt+");
+	if (!savefile) return;
+	MAPPER_SaveBindsToFile(savefile);
 	fclose(savefile);
+	if (Drives['C'-'A']) Drives['C'-'A']->EmptyCache();
+#ifdef EMSCRIPTEN
+	EM_ASM(FS.syncfs(false, function(err) {}));
+#endif
 	change_action_text("Mapper file saved.",CLR_WHITE);
 }
 
 static bool MAPPER_LoadBinds(void) {
-	FILE * loadfile=fopen(mapper.filename.c_str(),"rt");
+	FILE * loadfile=fopen("/drive_c/mapper.map","rt");
 	if (!loadfile) return false;
 	char linein[512];
 	while (fgets(linein,512,loadfile)) {
 		CreateStringBind(linein);
 	}
 	fclose(loadfile);
-	LOG_MSG("MAPPER: Loading mapper settings from %s", mapper.filename.c_str());
+	LOG_MSG("MAPPER: Loading mapper settings from /drive_c/mapper.map");
 	return true;
 }
 
@@ -2583,6 +2590,9 @@ void MAPPER_Run(bool pressed) {
 SDL_Surface* SDL_SetVideoMode_Wrap(int width,int height,int bpp,Bit32u flags);
 
 void MAPPER_RunInternal() {
+#ifdef EMSCRIPTEN
+	mapper_is_active = true;
+#endif
 	int cursor = SDL_ShowCursor(SDL_QUERY);
 	SDL_ShowCursor(SDL_ENABLE);
 	bool mousetoggle=false;
@@ -2652,6 +2662,9 @@ void MAPPER_RunInternal() {
 #endif
 #if defined (REDUCE_JOYSTICK_POLLING)
 	SDL_JoystickEventState(SDL_DISABLE);
+#endif
+#ifdef EMSCRIPTEN
+	mapper_is_active = false;
 #endif
 	if(mousetoggle) GFX_CaptureMouse();
 	SDL_ShowCursor(cursor);

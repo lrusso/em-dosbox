@@ -1388,12 +1388,15 @@ dosurface:
 	return retFlags;
 }
 
+bool mapper_is_active = false; //Set by sdl_mapper when the mapper UI is running
+
 #ifdef EMSCRIPTEN
 static void doGFX_CaptureMouse(void);
 static void DefocusPause(void);
+int mapper_mouse_x = 320, mapper_mouse_y = 240;
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_pointer_lock(void) {
-	if (sdl.window && !sdl.mouse.locked) GFX_CaptureMouse();
+	if (sdl.window && !sdl.mouse.locked && !mapper_is_active) GFX_CaptureMouse();
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
@@ -1406,12 +1409,22 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_on_focus(void) {
 	em_focus_regained = true;
 }
 
-extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_moved(int xrel, int yrel) {
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_moved(int xrel, int yrel, int xabs, int yabs) {
 	if (sdl.mouse.locked) {
 		Mouse_CursorMoved(
 			(float)xrel*sdl.mouse.xsensitivity/100.0f,
 			(float)yrel*sdl.mouse.ysensitivity/100.0f,
 			0, 0, true);
+	}
+	if (mapper_is_active) {
+		mapper_mouse_x = xabs;
+		mapper_mouse_y = yabs;
+		SDL_Event evt;
+		SDL_zero(evt);
+		evt.type = SDL_MOUSEMOTION;
+		evt.motion.x = xabs;
+		evt.motion.y = yabs;
+		SDL_PushEvent(&evt);
 	}
 }
 
@@ -1421,12 +1434,34 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_pointerlock_changed(int locked) {
 	}
 }
 
-extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_pressed(int button) {
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_pressed(int button, int xabs, int yabs) {
 	if (sdl.mouse.locked) Mouse_ButtonPressed(button);
+	if (mapper_is_active) {
+		mapper_mouse_x = xabs;
+		mapper_mouse_y = yabs;
+		SDL_Event evt;
+		SDL_zero(evt);
+		evt.type = SDL_MOUSEBUTTONDOWN;
+		evt.button.button = (button == 0) ? SDL_BUTTON_LEFT : (button == 1) ? SDL_BUTTON_RIGHT : SDL_BUTTON_MIDDLE;
+		evt.button.state = SDL_PRESSED;
+		evt.button.x = xabs;
+		evt.button.y = yabs;
+		SDL_PushEvent(&evt);
+	}
 }
 
-extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_released(int button) {
+extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_released(int button, int xabs, int yabs) {
 	if (sdl.mouse.locked) Mouse_ButtonReleased(button);
+	if (mapper_is_active) {
+		SDL_Event evt;
+		SDL_zero(evt);
+		evt.type = SDL_MOUSEBUTTONUP;
+		evt.button.button = (button == 0) ? SDL_BUTTON_LEFT : (button == 1) ? SDL_BUTTON_RIGHT : SDL_BUTTON_MIDDLE;
+		evt.button.state = SDL_RELEASED;
+		evt.button.x = xabs;
+		evt.button.y = yabs;
+		SDL_PushEvent(&evt);
+	}
 }
 
 void GFX_CaptureMouse(void) {
@@ -3148,14 +3183,26 @@ int main(int argc, char* argv[]) {
 		var canvasStyle = Module['canvas'].style;
 		function mapBtn(b) { return b === 0 ? 0 : b === 2 ? 1 : b === 1 ? 2 : -1; }
 		function safeCall(fn) { try { fn(); } catch(e) {} }
+		function canvasX(e) {
+			var c = Module['canvas'];
+			var r = c.getBoundingClientRect();
+			return ((e.clientX - r.left) * c.width / r.width)|0;
+		}
+		function canvasY(e) {
+			var c = Module['canvas'];
+			var r = c.getBoundingClientRect();
+			return ((e.clientY - r.top) * c.height / r.height)|0;
+		}
 		document.addEventListener('mousedown', function(e) {
-			var b = mapBtn(e.button); if (b >= 0) safeCall(function() { Module._em_mouse_pressed(b); });
+			var b = mapBtn(e.button);
+			if (b >= 0) safeCall(function() { Module._em_mouse_pressed(b, canvasX(e), canvasY(e)); });
 		}, true);
 		document.addEventListener('mouseup', function(e) {
-			var b = mapBtn(e.button); if (b >= 0) safeCall(function() { Module._em_mouse_released(b); });
+			var b = mapBtn(e.button);
+			if (b >= 0) safeCall(function() { Module._em_mouse_released(b, canvasX(e), canvasY(e)); });
 		}, true);
 		document.addEventListener('mousemove', function(e) {
-			safeCall(function() { Module._em_mouse_moved(e.movementX|0, e.movementY|0); });
+			safeCall(function() { Module._em_mouse_moved(e.movementX|0, e.movementY|0, canvasX(e), canvasY(e)); });
 		}, true);
 		document.addEventListener('pointerlockchange', function() {
 			safeCall(function() { Module._em_pointerlock_changed(document.pointerLockElement ? 1 : 0); });
