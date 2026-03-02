@@ -685,6 +685,11 @@ MixerObject::~MixerObject(){
 #ifdef EMSCRIPTEN
 static Uint8 *em_audio_buf = NULL;
 static int em_audio_buf_size = 0;
+static bool em_sound_muted = false;
+
+extern "C" void EMSCRIPTEN_KEEPALIVE em_toggle_sound(void) {
+	em_sound_muted = !em_sound_muted;
+}
 
 extern "C" Uint8* EMSCRIPTEN_KEEPALIVE em_audio_get_buffer(int len) {
 	if (em_audio_buf_size < len) {
@@ -693,6 +698,7 @@ extern "C" Uint8* EMSCRIPTEN_KEEPALIVE em_audio_get_buffer(int len) {
 		em_audio_buf_size = len;
 	}
 	MIXER_CallBack(NULL, em_audio_buf, len);
+	if (em_sound_muted) memset(em_audio_buf, 0, len);
 	return em_audio_buf;
 }
 
