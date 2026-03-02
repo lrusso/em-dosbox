@@ -61,6 +61,20 @@ extern "C" EMSCRIPTEN_RESULT emscripten_set_pointerlockchange_callback_on_thread
 #include "cross.h"
 #include "SDL.h"
 
+#ifdef EMSCRIPTEN
+extern "C" int SDL_ShowCursor(int toggle) { return SDL_ENABLE; }
+extern "C" void SDL_SetCursor(SDL_Cursor* cursor) {}
+/* SDL_SetDefaultCursor initializes the internal cur_cursor pointer (J[7568171]
+ * in asm.js) which enables all subsequent ShowCursor calls from SDL internals
+ * (SDL_SetMouseFocus, SDL_SetRelativeMouseMode, etc.).  Making it a no-op
+ * keeps that pointer NULL and prevents every internal ShowCursor path. */
+extern "C" void SDL_SetDefaultCursor(SDL_Cursor* cursor) {}
+/* SDL_SetRelativeMouseMode is called at DOSBox exit and internally tries to
+ * invoke emscripten_request_pointerlock / emscripten_exit_pointerlock, which
+ * conflicts with our custom pointer-lock management. */
+extern "C" int SDL_SetRelativeMouseMode(SDL_bool enabled) { return 0; }
+#endif
+
 #include "version.h"
 #include "dosbox.h"
 #include "video.h"
