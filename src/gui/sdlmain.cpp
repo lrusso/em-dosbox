@@ -1363,15 +1363,17 @@ dosurface:
 static bool use_capture_callback = false;
 static void doGFX_CaptureMouse(void);
 
+extern "C" int EMSCRIPTEN_KEEPALIVE em_should_lock_pointer(void) {
+	return (use_capture_callback && sdl.mouse.requestlock && !sdl.mouse.locked) ? 1 : 0;
+}
+
 void GFX_CaptureMouse(void) {
 	if (use_capture_callback) {
 		if (sdl.mouse.locked) {
 			emscripten_exit_pointerlock();
-		} else {
-			//This only raises a request. A callback will notify when pointer
-			// lock starts. The user may need to confirm a browser dialog.
-			EM_ASM(Module['canvas'].requestPointerLock());
 		}
+		// Locking is handled by the DOM mousedown listener which calls
+		// requestPointerLock() inside the event handler context.
 	} else {
 		doGFX_CaptureMouse();
 	}
@@ -3062,6 +3064,11 @@ int main(int argc, char* argv[]) {
 		canvasStyle.imageRendering = "optimize-contrast";
 		canvasStyle.imageRendering = "crisp-edges";
 		canvasStyle.imageRendering = "pixelated";
+		document.addEventListener('mousedown', function() {
+			if (Module._em_should_lock_pointer()) {
+				Module['canvas'].requestPointerLock();
+			}
+		}, true);
 	);
 	if (emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
 	                                              NULL, true,
