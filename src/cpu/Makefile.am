@@ -32,6 +32,6 @@ core_prefetch_fun.ii: libextfun.a
 BUILT_SOURCES = $(FUN_INCLUDES)
 CLEANFILES = $(PREPROCESSED_FILES) $(FUN_INCLUDES)
 $(FUN_INCLUDES): $(srcdir)/extractfun.py $(PREPROCESSED_FILES)
-	python $< $(srcdir) || rm -f $@
+	python3 $< $(srcdir) || rm -f $@
 AM_CPPFLAGS += -I$(builddir)
 endif

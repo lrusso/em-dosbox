@@ -50,6 +50,10 @@
 #include "programs.h"
 #include "midi.h"
 
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
 #define MIXER_SSIZE 4
 
 //#define MIXER_SHIFT 14
@@ -678,6 +682,62 @@ MixerObject::~MixerObject(){
 	MIXER_DelChannel(MIXER_FindChannel(m_name));
 }
 
+#ifdef EMSCRIPTEN
+static Uint8 *em_audio_buf = NULL;
+static int em_audio_buf_size = 0;
+
+extern "C" Uint8* EMSCRIPTEN_KEEPALIVE em_audio_get_buffer(int len) {
+	if (em_audio_buf_size < len) {
+		free(em_audio_buf);
+		em_audio_buf = (Uint8 *)malloc(len);
+		em_audio_buf_size = len;
+	}
+	MIXER_CallBack(NULL, em_audio_buf, len);
+	return em_audio_buf;
+}
+
+static void em_audio_init(int freq, int blocksize) {
+	EM_ASM({
+		var freq = $0;
+		var blocksize = $1;
+		var ctx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: freq});
+		Module._em_audioCtx = ctx;
+		Module._em_audioNextTime = 0;
+		Module._em_audioBlockSize = blocksize;
+
+		function audioFrame() {
+			requestAnimationFrame(audioFrame);
+			var ctx = Module._em_audioCtx;
+			if (!ctx) return;
+			var currentTime = ctx.currentTime;
+			var bs = Module._em_audioBlockSize;
+			var bufBytes = bs * 2 * 4;
+
+			while (Module._em_audioNextTime < currentTime + 0.1) {
+				var ptr = Module._em_audio_get_buffer(bufBytes);
+				var audioBuffer = ctx.createBuffer(2, bs, freq);
+				var left = audioBuffer.getChannelData(0);
+				var right = audioBuffer.getChannelData(1);
+				var f32 = ptr >> 2;
+				for (var i = 0; i < bs; i++) {
+					left[i] = HEAPF32[f32 + i * 2];
+					right[i] = HEAPF32[f32 + i * 2 + 1];
+				}
+				var source = ctx.createBufferSource();
+				source.buffer = audioBuffer;
+				source.connect(ctx.destination);
+				if (Module._em_audioNextTime < currentTime) {
+					Module._em_audioNextTime = currentTime;
+				}
+				source.start(Module._em_audioNextTime);
+				Module._em_audioNextTime += bs / freq;
+			}
+		}
+		requestAnimationFrame(audioFrame);
+	}, freq, blocksize);
+}
+#endif
+
 
 void MIXER_Init(Section* sec) {
 	sec->AddDestroyFunction(&MIXER_Stop);
@@ -696,22 +756,29 @@ void MIXER_Init(Section* sec) {
 	mixer.mastervol[0]=1.0f;
 	mixer.mastervol[1]=1.0f;
 
+	mixer.tick_counter=0;
+#ifdef EMSCRIPTEN
+	if (mixer.nosound) {
+		LOG_MSG("MIXER: No Sound Mode Selected.");
+		mixer.tick_add=calc_tickadd(mixer.freq);
+		TIMER_AddTickHandler(MIXER_Mix_NoSound);
+	} else {
+		mixer.tick_add=calc_tickadd(mixer.freq);
+		TIMER_AddTickHandler(MIXER_Mix);
+		em_audio_init(mixer.freq, mixer.blocksize);
+	}
+#else
 	/* Start the Mixer using SDL Sound at 22 khz */
 	SDL_AudioSpec spec;
 	SDL_AudioSpec obtained;
 
 	spec.freq=mixer.freq;
-#if defined(EMSCRIPTEN) && SDL_VERSION_ATLEAST(2,0,0)
-	spec.format=AUDIO_F32;
-#else
 	spec.format=AUDIO_S16SYS;
-#endif
 	spec.channels=2;
 	spec.callback=MIXER_CallBack;
 	spec.userdata=NULL;
 	spec.samples=(Uint16)mixer.blocksize;
 
-	mixer.tick_counter=0;
 	if (mixer.nosound) {
 		LOG_MSG("MIXER: No Sound Mode Selected.");
 		mixer.tick_add=calc_tickadd(mixer.freq);
@@ -730,6 +797,7 @@ void MIXER_Init(Section* sec) {
 		TIMER_AddTickHandler(MIXER_Mix);
 		SDL_PauseAudio(0);
 	}
+#endif
 	mixer.min_needed=section->Get_int("prebuffer");
 	if (mixer.min_needed>100) mixer.min_needed=100;
 	mixer.min_needed=(mixer.freq*mixer.min_needed)/1000;

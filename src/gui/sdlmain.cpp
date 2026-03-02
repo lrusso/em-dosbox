@@ -784,6 +784,12 @@ static SDL_Window * GFX_SetSDLWindowMode(Bit16u width, Bit16u height, bool fulls
 		                 | ((screenType == SCREEN_OPENGL) ? SDL_WINDOW_OPENGL : 0) | SDL_WINDOW_SHOWN);
 		if (sdl.window)
 			GFX_SetTitle(-1,-1,false); //refresh title.
+#ifdef EMSCRIPTEN
+		EM_ASM({
+			Module['canvas'].width = $0;
+			Module['canvas'].height = $1;
+		}, width, height);
+#endif
 		SDL_GetWindowSize(sdl.window, &currWidth, &currHeight);
 		sdl.update_display_contents = ((width == currWidth) && (height == currHeight));
 		return sdl.window;
@@ -809,6 +815,12 @@ static SDL_Window * GFX_SetSDLWindowMode(Bit16u width, Bit16u height, bool fulls
 
 		SDL_SetWindowSize(sdl.window, width, height);
 	}
+#ifdef EMSCRIPTEN
+	EM_ASM({
+		Module['canvas'].width = $0;
+		Module['canvas'].height = $1;
+	}, width, height);
+#endif
 	// Maybe some requested fullscreen resolution is unsupported?
 	SDL_GetWindowSize(sdl.window, &currWidth, &currHeight);
 	sdl.update_display_contents = ((width == currWidth) && (height == currHeight));
@@ -1358,7 +1370,7 @@ void GFX_CaptureMouse(void) {
 		} else {
 			//This only raises a request. A callback will notify when pointer
 			// lock starts. The user may need to confirm a browser dialog.
-			emscripten_request_pointerlock(NULL, true);
+			EM_ASM(Module['canvas'].requestPointerLock());
 		}
 	} else {
 		doGFX_CaptureMouse();

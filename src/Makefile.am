@@ -43,4 +43,4 @@ endif
 # https://stackoverflow.com/questions/1779984/header-dependency-in-automake
 BUILT_SOURCES=version.stamp
 version.stamp:
-	python $(srcdir)/version.py $(top_builddir)/include/version.h $(top_srcdir) $(CXX)
+	python3 $(srcdir)/version.py $(top_builddir)/include/version.h $(top_srcdir) $(CXX)
