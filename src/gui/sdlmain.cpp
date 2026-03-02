@@ -73,6 +73,16 @@ extern "C" void SDL_SetDefaultCursor(SDL_Cursor* cursor) {}
  * invoke emscripten_request_pointerlock / emscripten_exit_pointerlock, which
  * conflicts with our custom pointer-lock management. */
 extern "C" int SDL_SetRelativeMouseMode(SDL_bool enabled) { return 0; }
+/* Override SDL_SendKeyboardKeyAndKeycode so Emscripten_HandleKey returns
+   false (no preventDefault) when the Meta/Cmd key is held.
+   SDL_SendKeyboardKey processes the key normally; we just suppress the
+   return value so the browser can handle Meta key shortcuts. */
+extern "C" int SDL_SendKeyboardKey(Uint8 state, SDL_Scancode scancode);
+extern "C" int SDL_SendKeyboardKeyAndKeycode(Uint8 state, SDL_Scancode scancode, SDL_Keycode keycode) {
+	int result = SDL_SendKeyboardKey(state, scancode);
+	if (SDL_GetModState() & KMOD_GUI) return 0;
+	return result;
+}
 #endif
 
 #include "version.h"
