@@ -35,6 +35,10 @@
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
 #include <emscripten/html5.h>
+
+/* Override Emscripten's emscripten_set_window_title to prevent
+   SDL_CreateWindow from changing document.title. */
+extern "C" void emscripten_set_window_title(const char *title) { }
 #endif
 
 #include "cross.h"
