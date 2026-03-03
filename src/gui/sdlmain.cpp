@@ -1423,6 +1423,10 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_pointer_lock(void) {
 	if (sdl.window && !sdl.mouse.locked && !mapper_is_active) GFX_CaptureMouse();
 }
 
+extern "C" int EMSCRIPTEN_KEEPALIVE em_is_paused(void) {
+	return divert_events ? 1 : 0;
+}
+
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
 	/* SDL2's blur callback is stubbed out, so SDL_ResetKeyboard() never gets
 	 * called automatically. Call it here so SDL's internal key-state table is
@@ -1430,18 +1434,27 @@ extern "C" void EMSCRIPTEN_KEEPALIVE em_on_blur(void) {
 	 * as "pressed" and causing keystrokes to be ignored after returning. */
 	SDL_ResetKeyboard();
 	if (!divert_events) {
-		DefocusPause();
+		/* Do NOT use DefocusPause()/DOSBOX_SetLoop(DefocusPause_Loop) here.
+		 * Switching the loop pointer while Normal_Loop has a pending asyncify
+		 * rewind causes a function mismatch: asyncify resumes Normal_Loop
+		 * regardless of the pointer change, and the emulator never truly
+		 * pauses. Instead, just set divert_events and let Normal_Loop detect
+		 * it via em_is_paused() checks placed after every emscripten_sleep. */
+		GFX_SetTitle(-1,-1,true);
+		KEYBOARD_ClrBuffer();
+		divert_events = true;
 	}
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_on_focus(void) {
-	/* Directly clear divert_events here as a safety measure: if em_on_blur()
-	 * fired during early boot before DOSBOX_RealInit() ran, DefocusPause_Loop
-	 * may have been overridden by DOSBOX_SetLoop(&Normal_Loop) and will never
-	 * run to clear divert_events itself. Clearing it here ensures GFX_Events()
-	 * always processes keyboard events after focus is regained. */
-	divert_events = false;
-	em_focus_regained = true;
+	if (divert_events) {
+		GFX_SetTitle(-1,-1,false);
+		KEYBOARD_AddKey(KBD_leftalt, false);
+		KEYBOARD_AddKey(KBD_rightalt, false);
+		SetPriority(sdl.priority.focus);
+		CPU_Disable_SkipAutoAdjust();
+		divert_events = false;
+	}
 }
 
 extern "C" void EMSCRIPTEN_KEEPALIVE em_mouse_moved(int xrel, int yrel, int xabs, int yabs) {

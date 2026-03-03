@@ -715,6 +715,10 @@ static void em_audio_init(int freq, int blocksize) {
 			requestAnimationFrame(audioFrame);
 			var ctx = Module._em_audioCtx;
 			if (!ctx) return;
+			if (Module._em_is_paused()) {
+				Module._em_audioNextTime = 0;
+				return;
+			}
 			var currentTime = ctx.currentTime;
 			var bs = Module._em_audioBlockSize;
 			var bufBytes = bs * 2 * 4;

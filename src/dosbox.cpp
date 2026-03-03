@@ -24,6 +24,7 @@
 #include <unistd.h>
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
+extern "C" int em_is_paused(void);
 #endif
 #include "dosbox.h"
 #include "debug.h"
@@ -150,6 +151,14 @@ static int runcount = 0;
 static Bitu Normal_Loop(void) {
 	Bits ret;
 #ifdef EMSCRIPTEN
+#if defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY)
+	/* When paused (em_on_blur), sleep instead of running emulation.
+	 * This check catches fresh (non-rewind) calls to Normal_Loop. */
+	if (em_is_paused()) {
+		emscripten_sleep(50);
+		return 0;
+	}
+#endif
 	ticksEntry = GetTicks();
 #if defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY)
 	/* Normal DOSBox is free to use up all available host CPU time, but
@@ -165,6 +174,9 @@ static Bitu Normal_Loop(void) {
 #elif defined(EM_ASYNCIFY)
 			emscripten_sleep(1);
 #endif
+			/* After asyncify resume: if paused during the sleep, bail out
+			 * immediately so no emulation runs. */
+			if (em_is_paused()) return 0;
 			ticksEntry = GetTicks();
 		} else if (SDL_TICKS_PASSED(ticksEntry, last_sleep + 2000) &&
 		           !SDL_TICKS_PASSED(ticksEntry, last_loop + 200)) {
@@ -272,6 +284,9 @@ void increaseticks() { //Make it return ticksRemain and set it in the function a
 #endif
 		if (!CPU_CycleAutoAdjust || CPU_SkipCycleAutoAdjust || sleep1count < 3) {
 			wrap_delay(1);
+#if defined(EMSCRIPTEN) && (defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY))
+			if (em_is_paused()) return;
+#endif
 		} else {
 			/* Certain configurations always give an exact sleepingtime of 1, this causes problems due to the fact that
 			   dosbox keeps track of full blocks.
@@ -281,6 +296,9 @@ void increaseticks() { //Make it return ticksRemain and set it in the function a
 			static Bit32u sleepindex = 0;
 			if (ticksDone != lastsleepDone) sleepindex = 0;
 			wrap_delay(sleeppattern[sleepindex++]);
+#if defined(EMSCRIPTEN) && (defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY))
+			if (em_is_paused()) return;
+#endif
 			sleepindex %= sizeof(sleeppattern) / sizeof(sleeppattern[0]);
 		}
 		Bit32s timeslept = GetTicks() - ticksNew;
