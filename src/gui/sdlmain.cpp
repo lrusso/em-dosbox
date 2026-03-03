@@ -2059,7 +2059,6 @@ static void OutputString(Bitu x,Bitu y,const char * text,Bit32u color,Bit32u col
 	}
 }
 
-#include "dosbox_splash.h"
 
 //extern void UI_Run(bool);
 void Restart(bool pressed);
@@ -2317,7 +2316,6 @@ static void GUI_StartUp(Section * sec) {
 	if (!GFX_SetSDLSurfaceWindow(640,400))
 		E_Exit("Could not initialize video: %s",SDL_GetError());
 	sdl.surface = SDL_GetWindowSurface(sdl.window);
-	SDL_Rect splash_rect=GFX_GetSDLSurfaceSubwindowDims(640,400);
 	sdl.desktop.sdl2pixelFormat = SDL_GetWindowPixelFormat(sdl.window);
 	LOG_MSG("SDL:Current window pixel format: %s", SDL_GetPixelFormatName(sdl.desktop.sdl2pixelFormat));
 	/* Do NOT use SDL_BITSPERPIXEL here - It returns 24 for
@@ -2339,135 +2337,6 @@ static void GUI_StartUp(Section * sec) {
 	SDL_WM_SetCaption("DOSBox",VERSION);
 #endif
 
-/* The endian part is intentionally disabled as somehow it produces correct results without according to rhoenie*/
-//#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-//    Bit32u rmask = 0xff000000;
-//    Bit32u gmask = 0x00ff0000;
-//    Bit32u bmask = 0x0000ff00;
-//#else
-    Bit32u rmask = 0x000000ff;
-    Bit32u gmask = 0x0000ff00;
-    Bit32u bmask = 0x00ff0000;
-//#endif
-
-/* I'm sorry about disabling this in some circumstances, but:
- * The splash screen requires emterpreter sync.
- * Creating a 2D context prevents subsequent creation of a 3D context.
- */
-#if !defined(EMSCRIPTEN) || defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY)
-/* Please leave the Splash screen stuff in working order in DOSBox. We spend a lot of time making DOSBox. */
-	SDL_Surface* splash_surf = NULL;
-#ifdef EMSCRIPTEN
-	if (output != "texture" && output != "texturenb")
-#endif
-		splash_surf = SDL_CreateRGBSurface(SDL_SWSURFACE, 640, 400, 32, rmask, gmask, bmask, 0);
-	if (splash_surf) {
-#if SDL_VERSION_ATLEAST(2,0,0)
-		SDL_SetSurfaceBlendMode(splash_surf, SDL_BLENDMODE_BLEND);
-#endif
-		SDL_FillRect(splash_surf, NULL, SDL_MapRGB(splash_surf->format, 0, 0, 0));
-
-		if (SDL_MUSTLOCK(splash_surf) && SDL_LockSurface(splash_surf)) {
-			SDL_FreeSurface(splash_surf);
-			splash_surf = NULL;
-		}
-	}
-
-	if (splash_surf) {
-		Bit8u* tmpbufp = new Bit8u[640*400*3];
-		GIMP_IMAGE_RUN_LENGTH_DECODE(tmpbufp,gimp_image.rle_pixel_data,640*400,3);
-		for (Bitu y=0; y<400; y++) {
-
-			Bit8u* tmpbuf = tmpbufp + y*640*3;
-			Bit32u * draw=(Bit32u*)(((Bit8u *)splash_surf->pixels)+((y)*splash_surf->pitch));
-			for (Bitu x=0; x<640; x++) {
-//#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-//				*draw++ = tmpbuf[x*3+2]+tmpbuf[x*3+1]*0x100+tmpbuf[x*3+0]*0x10000+0x00000000;
-//#else
-				*draw++ = tmpbuf[x*3+0]+tmpbuf[x*3+1]*0x100+tmpbuf[x*3+2]*0x10000+0x00000000;
-//#endif
-			}
-		}
-
-		if (SDL_MUSTLOCK(splash_surf))
-			SDL_UnlockSurface(splash_surf);
-
-		bool exit_splash = false;
-
-		static Bitu max_splash_loop = 600;
-		static Bitu splash_fade = 100;
-		static bool use_fadeout = true;
-
-		for (Bit32u ct = 0,startticks = GetTicks();ct < max_splash_loop;ct = GetTicks()-startticks) {
-			SDL_Event evt;
-			while (SDL_PollEvent(&evt)) {
-				if (evt.type == SDL_QUIT) {
-					exit_splash = true;
-					break;
-				}
-			}
-			if (exit_splash) break;
-#ifdef EMSCRIPTEN
-#ifdef EMTERPRETER_SYNC
-			emscripten_sleep_with_yield(1);
-#elif defined(EM_ASYNCIFY)
-			emscripten_sleep(1);
-#endif
-#endif
-
-			if (ct<1) {
-				SDL_FillRect(sdl.surface, NULL, SDL_MapRGB(sdl.surface->format, 0, 0, 0));
-#if SDL_VERSION_ATLEAST(2,0,0)
-				SDL_SetSurfaceAlphaMod(splash_surf, 255);
-				SDL_BlitScaled(splash_surf, NULL, sdl.surface, &splash_rect);
-#else
-				SDL_SetAlpha(splash_surf, SDL_SRCALPHA,255);
-				SDL_BlitSurface(splash_surf, NULL, sdl.surface, NULL);
-#endif
-#if SDL_VERSION_ATLEAST(2,0,0)
-				SDL_UpdateWindowSurface(sdl.window);
-#else
-				SDL_Flip(sdl.surface);
-#endif
-			} else if (ct>=max_splash_loop-splash_fade) {
-				if (use_fadeout) {
-					SDL_FillRect(sdl.surface, NULL, SDL_MapRGB(sdl.surface->format, 0, 0, 0));
-#if SDL_VERSION_ATLEAST(2,0,0)
-					SDL_SetSurfaceAlphaMod(splash_surf, (Bit8u)((max_splash_loop-1-ct)*255/(splash_fade-1)));
-					SDL_BlitScaled(splash_surf, NULL, sdl.surface, &splash_rect);
-#else
-					SDL_SetAlpha(splash_surf, SDL_SRCALPHA, (Bit8u)((max_splash_loop-1-ct)*255/(splash_fade-1)));
-					SDL_BlitSurface(splash_surf, NULL, sdl.surface, NULL);
-#endif
-#if SDL_VERSION_ATLEAST(2,0,0)
-					SDL_UpdateWindowSurface(sdl.window);
-#else
-					SDL_Flip(sdl.surface);
-#endif
-				}
-			} else { // Fix a possible glitch
-#if SDL_VERSION_ATLEAST(2,0,0)
-				SDL_UpdateWindowSurface(sdl.window);
-#else
-				SDL_Flip(sdl.surface);
-#endif
-			}
-
-		}
-
-		if (use_fadeout) {
-			SDL_FillRect(sdl.surface, NULL, SDL_MapRGB(sdl.surface->format, 0, 0, 0));
-#if SDL_VERSION_ATLEAST(2,0,0)
-			SDL_UpdateWindowSurface(sdl.window);
-#else
-			SDL_Flip(sdl.surface);
-#endif
-		}
-		SDL_FreeSurface(splash_surf);
-		delete [] tmpbufp;
-
-	}
-#endif // !defined(EMSCRIPTEN) || defined(EMTERPRETER_SYNC) || defined(EM_ASYNCIFY)
 	/* Get some Event handlers */
 	MAPPER_AddHandler(KillSwitch,MK_f9,MMOD1,"shutdown","ShutDown");
 	MAPPER_AddHandler(CaptureMouse,MK_f10,MMOD1,"capmouse","Cap Mouse");
