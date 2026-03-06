@@ -2358,7 +2358,8 @@ static void GUI_StartUp(Section * sec) {
 
 void Mouse_AutoLock(bool enable) {
 #ifdef EMSCRIPTEN
-	(void)enable;
+	sdl.mouse.autolock=enable;
+	EM_ASM_({ Module['mouseAutolock'] = $0; }, enable ? 1 : 0);
 #else
 	sdl.mouse.autolock=enable;
 	if (sdl.mouse.autoenable) sdl.mouse.requestlock=enable;
@@ -3111,7 +3112,12 @@ int main(int argc, char* argv[]) {
 		}
 		document.addEventListener('mousedown', function(e) {
 			var b = mapBtn(e.button);
-			if (b >= 0) safeCall(function() { Module._em_mouse_pressed(b, canvasX(e), canvasY(e)); });
+			if (b < 0) return;
+			if (!document.pointerLockElement && Module['mouseAutolock']) {
+				Module['canvas'].requestPointerLock().catch(function(){});
+				return;
+			}
+			safeCall(function() { Module._em_mouse_pressed(b, canvasX(e), canvasY(e)); });
 		}, true);
 		document.addEventListener('mouseup', function(e) {
 			var b = mapBtn(e.button);
