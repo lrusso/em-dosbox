@@ -3114,6 +3114,7 @@ int main(int argc, char* argv[]) {
 			var b = mapBtn(e.button);
 			if (b < 0) return;
 			if (!document.pointerLockElement && Module['mouseAutolock']) {
+				if (e.target !== Module['canvas']) return;
 				Module['canvas'].requestPointerLock().catch(function(){});
 				return;
 			}
