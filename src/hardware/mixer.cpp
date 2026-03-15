@@ -744,6 +744,24 @@ static void em_audio_init(int freq, int blocksize) {
 			}
 		}
 		requestAnimationFrame(audioFrame);
+
+		// On iOS, a system-suspended AudioContext often cannot be resumed.
+		// Try resume first; if the context is closed, recreate it.
+		document.addEventListener("touchstart", function () {
+			var ctx = Module._em_audioCtx;
+			if (!ctx || ctx.state === "running") {
+				return;
+			}
+			if (ctx.state === "suspended") {
+				ctx.resume();
+				Module._em_audioNextTime = 0;
+				return;
+			}
+			// Context is closed — recreate it and resume within the user gesture
+			Module._em_audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: freq});
+			Module._em_audioCtx.resume();
+			Module._em_audioNextTime = 0;
+		});
 	}, freq, blocksize);
 }
 #endif
